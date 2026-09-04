@@ -165,8 +165,11 @@ static int sde_backlight_setup(struct sde_connector *c_conn,
 	bl_config = &display->panel->bl_config;
 	props.max_brightness = bl_config->brightness_max_level;
 	props.brightness = bl_config->brightness_init_level;
-	props.brightness_clone = bl_config->brightness_init_level;
-	props.brightness_clone_backup = bl_config->brightness_init_level;
+	props.max_brightness_clone = display->panel->mi_cfg.max_brightness_clone;
+	props.brightness_clone = DIV_ROUND_CLOSEST(
+			bl_config->brightness_init_level * props.max_brightness_clone,
+			bl_config->brightness_max_level);
+	props.brightness_clone_backup = props.brightness_clone;
 	snprintf(bl_node_name, BL_NODE_NAME_SIZE, "panel%u-backlight",
 							display_count);
 	c_conn->bl_device = backlight_device_register(bl_node_name, dev->dev,

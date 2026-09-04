@@ -206,6 +206,8 @@ static ssize_t brightness_store(struct device *dev,
 	int rc;
 	struct backlight_device *bd = to_backlight_device(dev);
 	unsigned long brightness;
+	unsigned long brightness_clone;
+	unsigned long brightness_clone_limit;
 
 	rc = kstrtoul(buf, 0, &brightness);
 	if (rc)
@@ -213,10 +215,21 @@ static ssize_t brightness_store(struct device *dev,
 
 	bd->usr_brightness_req = brightness;
 	rc = backlight_device_set_brightness(bd, brightness);
-	if (!rc && bd->props.brightness_clone != brightness) {
-		bd->props.brightness_clone_backup = brightness;
-		bd->props.brightness_clone = brightness;
-		sysfs_notify(&bd->dev.kobj, NULL, "brightness_clone");
+	if (!rc) {
+		if (bd->props.max_brightness_clone && bd->props.max_brightness)
+			brightness_clone = DIV_ROUND_CLOSEST(brightness *
+					bd->props.max_brightness_clone,
+					bd->props.max_brightness);
+		else
+			brightness_clone = brightness;
+
+		bd->props.brightness_clone_backup = brightness_clone;
+		brightness_clone_limit = bd->thermal_brightness_clone_limit ?: brightness_clone;
+		brightness_clone = min(brightness_clone, brightness_clone_limit);
+		if (bd->props.brightness_clone != brightness_clone) {
+			bd->props.brightness_clone = brightness_clone;
+			sysfs_notify(&bd->dev.kobj, NULL, "brightness_clone");
+		}
 	}
 
 	return rc ? rc : count;
