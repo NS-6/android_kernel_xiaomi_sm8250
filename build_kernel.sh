@@ -8,9 +8,10 @@ set -e
 # ==========================================
 if [ -z "$1" ]; then
     echo "[!] Error: No device specified."
-    echo "Usage: $0 <device_name> [ksu] [miui|aosp]"
+    echo "Usage: $0 <device_name> [ksu|ksu=<commit_or_tag>] [miui|aosp]"
     echo "Example: $0 lmi"
     echo "         $0 lmi ksu"
+    echo "         $0 lmi ksu=f1dd81dc96d7f3f6691e6ac8b50fba9ae8a2f17c"
     echo "         $0 lmi ksu miui"
     echo "         $0 lmi aosp"
     exit 1
@@ -29,11 +30,25 @@ fi
 ENABLE_KSU=0
 TARGET_OS="both"
 
+# Default pinned ReSukiSU commit (ensures reproducible builds matching SuSFS v2.3.0)
+DEFAULT_RESUKISU_REF="f1dd81dc96d7f3f6691e6ac8b50fba9ae8a2f17c"
+RESUKISU_REF="${RESUKISU_REF:-$DEFAULT_RESUKISU_REF}"
+
 shift
 # Parse remaining arguments loosely
 for arg in "$@"; do
     case "$arg" in
-        ksu) ENABLE_KSU=1 ;;
+        ksu)
+            ENABLE_KSU=1
+            ;;
+        ksu=*)
+            ENABLE_KSU=1
+            RESUKISU_REF="${arg#*=}"
+            ;;
+        ksu:*)
+            ENABLE_KSU=1
+            RESUKISU_REF="${arg#*:}"
+            ;;
         miui) TARGET_OS="miui" ;;
         aosp) TARGET_OS="aosp" ;;
     esac
@@ -75,8 +90,13 @@ if [ "$ENABLE_KSU" -eq 1 ]; then
     echo "==========================================="
     echo " [*] Initializing KernelSU (ReSukiSU) Setup"
     echo "==========================================="
-    echo "[*] Downloading and running ReSukiSU remote setup script..."
-    curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" | bash
+    if [ "$RESUKISU_REF" == "latest" ] || [ "$RESUKISU_REF" == "main" ]; then
+        echo "[*] Downloading and running ReSukiSU remote setup script (latest main)..."
+        curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" | bash
+    else
+        echo "[*] Downloading and running ReSukiSU remote setup script (pinned ref: ${RESUKISU_REF})..."
+        curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" | bash -s "$RESUKISU_REF"
+    fi
     echo "[+] KernelSU setup finished."
 fi
 
@@ -92,6 +112,17 @@ wget -O- https://github.com/vc-teahouse/Baseband-guard/raw/main/setup.sh | bash
 echo "[*] Patching security/Kconfig for baseband_guard..."
 sed -i '/^config LSM$/,/^help$/{ /^[[:space:]]*default/ { /baseband_guard/! s/selinux/selinux,baseband_guard/ } }' security/Kconfig
 echo "[+] Baseband-guard setup finished."
+echo "==========================================="
+
+# ==========================================
+# NoMount Setup
+# ==========================================
+echo "==========================================="
+echo " [*] Initializing NoMount Setup"
+echo "==========================================="
+echo "[*] Downloading and running NoMount remote setup script..."
+curl -LSs "https://raw.githubusercontent.com/maxsteeel/nomount/refs/heads/dev/kernel/setup.sh" | bash -s dev
+echo "[+] NoMount setup finished."
 echo "==========================================="
 
 # ==========================================
@@ -210,7 +241,13 @@ build_target() {
             -e KSU_SUSFS
     fi
 
-    # 3. MIUI configurations
+    # 3. NoMount configurations (Always applied)
+    echo "[*] Injecting NoMount & KEYS configurations..."
+    scripts/config --file "${OUT_DIR}/.config" \
+        -e KEYS \
+        -e NOMOUNT
+
+    # 4. MIUI configurations
     if [ "$OS_TYPE" == "miui" ]; then
         echo "[*] Injecting MIUI specific configurations..."
         scripts/config --file "${OUT_DIR}/.config" \
