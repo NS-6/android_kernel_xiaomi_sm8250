@@ -27,6 +27,11 @@ on:
         required: true
         type: boolean
         default: false
+      ksu_ref:
+        description: 'ReSukiSU Commit/Tag (default: 3380d41)'
+        required: false
+        type: string
+        default: '3380d41'
       target_os:
         description: 'Target OS (目标系统)'
         required: true
@@ -80,7 +85,11 @@ jobs:
         ARGS="${{ github.event.inputs.device }}"
         
         if [ "${{ github.event.inputs.ksu }}" == "true" ]; then
-          ARGS="$ARGS ksu"
+          if [ -n "${{ github.event.inputs.ksu_ref }}" ]; then
+            ARGS="$ARGS ksu=${{ github.event.inputs.ksu_ref }}"
+          else
+            ARGS="$ARGS ksu"
+          fi
         fi
         
         if [ "${{ github.event.inputs.target_os }}" != "both" ]; then

@@ -8,6 +8,11 @@ on:
         required: true
         type: boolean
         default: true
+      ksu_ref:
+        description: 'ReSukiSU Commit/Tag (default: 3380d41)'
+        required: false
+        type: string
+        default: '3380d41'
 
 permissions:
   contents: write
@@ -77,7 +82,11 @@ jobs:
           
           ARGS="${{ matrix.device }}"
           if [ "${{ matrix.ksu }}" = "true" ]; then
-            ARGS="$ARGS ksu"
+            if [ -n "${{ github.event.inputs.ksu_ref }}" ]; then
+              ARGS="$ARGS ksu=${{ github.event.inputs.ksu_ref }}"
+            else
+              ARGS="$ARGS ksu"
+            fi
           fi
           
           echo "Executing command: ./build_kernel.sh $ARGS"

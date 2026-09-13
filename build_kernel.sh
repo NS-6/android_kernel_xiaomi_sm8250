@@ -8,9 +8,10 @@ set -e
 # ==========================================
 if [ -z "$1" ]; then
     echo "[!] Error: No device specified."
-    echo "Usage: $0 <device_name> [ksu] [miui|aosp]"
+    echo "Usage: $0 <device_name> [ksu|ksu=<commit_or_tag>] [miui|aosp]"
     echo "Example: $0 lmi"
     echo "         $0 lmi ksu"
+    echo "         $0 lmi ksu=3380d41"
     echo "         $0 lmi ksu miui"
     echo "         $0 lmi aosp"
     exit 1
@@ -29,11 +30,25 @@ fi
 ENABLE_KSU=0
 TARGET_OS="both"
 
+# Default pinned ReSukiSU commit (ensures reproducible builds matching SuSFS v2.3.0)
+DEFAULT_RESUKISU_REF="3380d41"
+RESUKISU_REF="${RESUKISU_REF:-$DEFAULT_RESUKISU_REF}"
+
 shift
 # Parse remaining arguments loosely
 for arg in "$@"; do
     case "$arg" in
-        ksu) ENABLE_KSU=1 ;;
+        ksu)
+            ENABLE_KSU=1
+            ;;
+        ksu=*)
+            ENABLE_KSU=1
+            RESUKISU_REF="${arg#*=}"
+            ;;
+        ksu:*)
+            ENABLE_KSU=1
+            RESUKISU_REF="${arg#*:}"
+            ;;
         miui) TARGET_OS="miui" ;;
         aosp) TARGET_OS="aosp" ;;
     esac
@@ -75,9 +90,46 @@ if [ "$ENABLE_KSU" -eq 1 ]; then
     echo "==========================================="
     echo " [*] Initializing KernelSU (ReSukiSU) Setup"
     echo "==========================================="
-    echo "[*] Downloading and running ReSukiSU remote setup script..."
-    curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" | bash
+    if [ "$RESUKISU_REF" == "latest" ] || [ "$RESUKISU_REF" == "main" ]; then
+        echo "[*] Downloading and running ReSukiSU remote setup script (latest main)..."
+        curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" | bash
+    else
+        echo "[*] Downloading and running ReSukiSU remote setup script (pinned ref: ${RESUKISU_REF})..."
+        curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" | bash -s "$RESUKISU_REF"
+    fi
     echo "[+] KernelSU setup finished."
+
+    # Extract ReSukiSU metadata
+    if [ -d "KernelSU" ]; then
+        RESUKISU_COMMIT=$(git -C KernelSU rev-parse HEAD 2>/dev/null || echo "unknown")
+        RESUKISU_COMMIT_SHORT=$(git -C KernelSU rev-parse --short=7 HEAD 2>/dev/null || echo "unknown")
+        RESUKISU_TAG=$(git -C KernelSU describe --tags --always --abbrev=0 2>/dev/null || echo "unknown")
+        RESUKISU_COUNT=$(git -C KernelSU rev-list --count HEAD 2>/dev/null || echo 0)
+        RESUKISU_VER_CODE=$((30000 + RESUKISU_COUNT + 700))
+        
+        echo "==========================================="
+        echo " [*] ReSukiSU Information"
+        echo "==========================================="
+        echo " [+] Commit:              ${RESUKISU_COMMIT_SHORT} (${RESUKISU_COMMIT})"
+        echo " [+] Manager Version:     ${RESUKISU_TAG} (${RESUKISU_VER_CODE})"
+        echo " [+] Matching Manager APK: ReSukiSU_${RESUKISU_TAG}_${RESUKISU_VER_CODE} (${RESUKISU_COMMIT_SHORT})"
+        echo " [+] ReSukiSU Actions:    https://github.com/ReSukiSU/ReSukiSU/actions"
+        echo "==========================================="
+
+        # Output to GitHub Step Summary if running in GitHub Actions
+        if [ -n "$GITHUB_STEP_SUMMARY" ]; then
+            cat <<EOF >> "$GITHUB_STEP_SUMMARY"
+### 🛡️ ReSukiSU Build Info
+| Item | Value |
+| :--- | :--- |
+| **ReSukiSU Commit** | [\`${RESUKISU_COMMIT_SHORT}\`](https://github.com/ReSukiSU/ReSukiSU/commit/${RESUKISU_COMMIT}) |
+| **Manager Version** | \`${RESUKISU_TAG}\` (\`${RESUKISU_VER_CODE}\`) |
+| **Target APK** | \`ReSukiSU_${RESUKISU_TAG}_${RESUKISU_VER_CODE}\` |
+| **CI Actions** | [ReSukiSU CI Builds](https://github.com/ReSukiSU/ReSukiSU/actions) |
+
+EOF
+        fi
+    fi
 fi
 
 # ==========================================
@@ -92,6 +144,17 @@ wget -O- https://github.com/vc-teahouse/Baseband-guard/raw/main/setup.sh | bash
 echo "[*] Patching security/Kconfig for baseband_guard..."
 sed -i '/^config LSM$/,/^help$/{ /^[[:space:]]*default/ { /baseband_guard/! s/selinux/selinux,baseband_guard/ } }' security/Kconfig
 echo "[+] Baseband-guard setup finished."
+echo "==========================================="
+
+# ==========================================
+# NoMount Setup
+# ==========================================
+echo "==========================================="
+echo " [*] Initializing NoMount Setup"
+echo "==========================================="
+echo "[*] Downloading and running NoMount remote setup script..."
+curl -LSs "https://raw.githubusercontent.com/maxsteeel/nomount/refs/heads/dev/kernel/setup.sh" | bash -s dev
+echo "[+] NoMount setup finished."
 echo "==========================================="
 
 # ==========================================
@@ -200,9 +263,11 @@ build_target() {
     # Configuration tweaks
     # ----------------------------------------------------
     
-    # 1. Baseband-guard configuration (Always applied)
-    echo "[*] Injecting Baseband-guard configuration..."
-    scripts/config --file "${OUT_DIR}/.config" -e BBG
+    # 1. Baseband-guard & Common configurations (Always applied)
+    echo "[*] Injecting Baseband-guard & Shadow Call Stack configurations..."
+    scripts/config --file "${OUT_DIR}/.config" \
+        -e BBG \
+        -d SHADOW_CALL_STACK
 
     # 2. KernelSU configurations
     if [ "$ENABLE_KSU" -eq 1 ]; then
@@ -213,7 +278,13 @@ build_target() {
             -e KSU_SUSFS
     fi
 
-    # 3. MIUI configurations
+    # 3. NoMount configurations (Always applied)
+    echo "[*] Injecting NoMount & KEYS configurations..."
+    scripts/config --file "${OUT_DIR}/.config" \
+        -e KEYS \
+        -e NOMOUNT
+
+    # 4. MIUI configurations
     if [ "$OS_TYPE" == "miui" ]; then
         echo "[*] Injecting MIUI specific configurations..."
         scripts/config --file "${OUT_DIR}/.config" \
@@ -251,7 +322,7 @@ build_target() {
             -d REKERNEL_NETWORK
     fi
 
-    # 4. AOSP configurations
+    # 5. AOSP configurations
     if [ "$OS_TYPE" == "aosp" ]; then
         echo "[*] Injecting AOSP specific configurations..."
         scripts/config --file "${OUT_DIR}/.config" \

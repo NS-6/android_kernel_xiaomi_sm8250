@@ -319,30 +319,11 @@ static int susfs_mark_inode_sus_kstat(char *target_pathname, struct st_susfs_sus
 			err = -ENOENT;
 			goto out_path_put_path;
 		}
-		if (is_update) {
+		if (is_update)
 			new_entry->info.spoofed_size = d_backing_inode(path.dentry)->i_size;
-		} else {
-			new_entry->is_fuse = true;
-			new_entry->target_dev = fi->inode.i_sb->s_dev;
-			new_entry->spoofed_mnt_id = susfs_get_non_sus_mnt_id_from_mnt(real_mount(path.mnt));
-			no_sus_vfsmnt = susfs_get_non_sus_vfsmnt_from_vfsmnt(path.mnt);
-			err = statfs_by_dentry(no_sus_vfsmnt->mnt_root, &new_entry->spoofed_kstatfs);
-			dput(no_sus_vfsmnt->mnt_root);
-			mntput(no_sus_vfsmnt);
-			if (err)
-				goto out_path_put_path;
-		}
-		set_bit(AS_FLAGS_SUS_KSTAT, &fi->inode.i_state);
-		SUSFS_LOGI("marked AS_FLAGS_SUS_KSTAT on pathname: '%s', is_fuse: %d, fi->inode.i_sb->s_dev: %u, fi->nodeid: %llu, fi->inode.i_ino: %lu, fi->inode.i_state: 0x%lx, spoofed_mnt_id: '%d'\n",
-					target_pathname, new_entry->is_fuse, fi->inode.i_sb->s_dev, fi->nodeid, fi->inode.i_ino, fi->inode.i_state, new_entry->spoofed_mnt_id);
-		goto out_path_put_path;
-	}
 
-	if (is_update) {
-		new_entry->info.spoofed_size = d_backing_inode(path.dentry)->i_size;
-	} else {
-		new_entry->is_fuse = false;
-		new_entry->target_dev = inode->i_sb->s_dev;
+		new_entry->is_fuse = true;
+		new_entry->target_dev = fi->inode.i_sb->s_dev;
 		new_entry->spoofed_mnt_id = susfs_get_non_sus_mnt_id_from_mnt(real_mount(path.mnt));
 		no_sus_vfsmnt = susfs_get_non_sus_vfsmnt_from_vfsmnt(path.mnt);
 		err = statfs_by_dentry(no_sus_vfsmnt->mnt_root, &new_entry->spoofed_kstatfs);
@@ -350,7 +331,24 @@ static int susfs_mark_inode_sus_kstat(char *target_pathname, struct st_susfs_sus
 		mntput(no_sus_vfsmnt);
 		if (err)
 			goto out_path_put_path;
+		set_bit(AS_FLAGS_SUS_KSTAT, &fi->inode.i_state);
+		SUSFS_LOGI("marked AS_FLAGS_SUS_KSTAT on pathname: '%s', is_fuse: %d, fi->inode.i_sb->s_dev: %u, fi->nodeid: %llu, fi->inode.i_ino: %lu, fi->inode.i_state: 0x%lx, spoofed_mnt_id: '%d'\n",
+					target_pathname, new_entry->is_fuse, fi->inode.i_sb->s_dev, fi->nodeid, fi->inode.i_ino, fi->inode.i_state, new_entry->spoofed_mnt_id);
+		goto out_path_put_path;
 	}
+
+	if (is_update)
+		new_entry->info.spoofed_size = d_backing_inode(path.dentry)->i_size;
+
+	new_entry->is_fuse = false;
+	new_entry->target_dev = inode->i_sb->s_dev;
+	new_entry->spoofed_mnt_id = susfs_get_non_sus_mnt_id_from_mnt(real_mount(path.mnt));
+	no_sus_vfsmnt = susfs_get_non_sus_vfsmnt_from_vfsmnt(path.mnt);
+	err = statfs_by_dentry(no_sus_vfsmnt->mnt_root, &new_entry->spoofed_kstatfs);
+	dput(no_sus_vfsmnt->mnt_root);
+	mntput(no_sus_vfsmnt);
+	if (err)
+		goto out_path_put_path;
 	set_bit(AS_FLAGS_SUS_KSTAT, &inode->i_state);
 	SUSFS_LOGI("marked AS_FLAGS_SUS_KSTAT on pathname: '%s', is_fuse: %d, inode->i_sb->s_dev: %u,  inode->i_ino: %lu, inode->i_state: 0x%lx, spoofed_mnt_id: '%d'\n",
 				target_pathname, new_entry->is_fuse, inode->i_sb->s_dev, inode->i_ino, inode->i_state, new_entry->spoofed_mnt_id);
