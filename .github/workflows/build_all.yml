@@ -8,6 +8,11 @@ on:
         required: true
         type: boolean
         default: true
+      nomount:
+        description: 'Enable NoMount'
+        required: true
+        type: boolean
+        default: false
       ksu_ref:
         description: 'ReSukiSU Commit/Tag (default: 3380d41)'
         required: false
@@ -80,13 +85,16 @@ jobs:
         run: |
           chmod +x build_kernel.sh
           
-          ARGS="${{ matrix.device }}"
+          ARGS="${{ matrix.device }} both"
           if [ "${{ matrix.ksu }}" = "true" ]; then
             if [ -n "${{ github.event.inputs.ksu_ref }}" ]; then
               ARGS="$ARGS ksu=${{ github.event.inputs.ksu_ref }}"
             else
               ARGS="$ARGS ksu"
             fi
+          fi
+          if [ "${{ github.event.inputs.nomount }}" = "true" ]; then
+            ARGS="$ARGS nomount"
           fi
           
           echo "Executing command: ./build_kernel.sh $ARGS"

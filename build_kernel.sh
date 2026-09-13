@@ -6,36 +6,18 @@ set -e
 # ==========================================
 # Argument Parsing
 # ==========================================
-if [ -z "$1" ]; then
-    echo "[!] Error: No device specified."
-    echo "Usage: $0 <device_name> [ksu|ksu=<commit_or_tag>] [miui|aosp]"
-    echo "Example: $0 lmi"
-    echo "         $0 lmi ksu"
-    echo "         $0 lmi ksu=3380d41"
-    echo "         $0 lmi ksu miui"
-    echo "         $0 lmi aosp"
-    exit 1
-fi
-
-DEVICE_NAME="$1"
-DEFCONFIG="${DEVICE_NAME}_defconfig"
-DEFCONFIG_PATH="arch/arm64/configs/${DEFCONFIG}"
-
-if [ ! -f "$DEFCONFIG_PATH" ]; then
-    echo "[!] Error: Defconfig not found at $DEFCONFIG_PATH"
-    echo "[!] Please verify the device name and try again."
-    exit 1
-fi
+DEFAULT_DEVICE="alioth"
+DEVICE_NAME=""
 
 ENABLE_KSU=0
-TARGET_OS="both"
+ENABLE_NOMOUNT=0
+TARGET_OS="aosp"
 
 # Default pinned ReSukiSU commit (ensures reproducible builds matching SuSFS v2.3.0)
 DEFAULT_RESUKISU_REF="3380d41"
 RESUKISU_REF="${RESUKISU_REF:-$DEFAULT_RESUKISU_REF}"
 
-shift
-# Parse remaining arguments loosely
+# Parse arguments loosely
 for arg in "$@"; do
     case "$arg" in
         ksu)
@@ -49,10 +31,55 @@ for arg in "$@"; do
             ENABLE_KSU=1
             RESUKISU_REF="${arg#*:}"
             ;;
-        miui) TARGET_OS="miui" ;;
-        aosp) TARGET_OS="aosp" ;;
+        nomount)
+            ENABLE_NOMOUNT=1
+            ;;
+        miui)
+            TARGET_OS="miui"
+            ;;
+        aosp)
+            TARGET_OS="aosp"
+            ;;
+        both)
+            TARGET_OS="both"
+            ;;
+        *)
+            if [ -z "$DEVICE_NAME" ]; then
+                DEVICE_NAME="$arg"
+            else
+                echo "[!] Warning: Unknown argument: $arg"
+            fi
+            ;;
     esac
 done
+
+if [ -z "$DEVICE_NAME" ]; then
+    DEVICE_NAME="$DEFAULT_DEVICE"
+    echo "[*] No device specified, defaulting to: ${DEVICE_NAME}"
+fi
+
+DEFCONFIG="${DEVICE_NAME}_defconfig"
+DEFCONFIG_PATH="arch/arm64/configs/${DEFCONFIG}"
+
+if [ ! -f "$DEFCONFIG_PATH" ]; then
+    echo "[!] Error: Defconfig not found at $DEFCONFIG_PATH"
+    echo "Usage: $0 [device_name] [ksu|ksu=<commit_or_tag>] [nomount] [aosp|miui|both]"
+    echo "Example: $0 alioth"
+    echo "         $0 alioth ksu"
+    echo "         $0 alioth ksu=3380d41 nomount"
+    echo "         $0 alioth ksu nomount aosp"
+    echo "         $0 alioth both"
+    exit 1
+fi
+
+echo "==========================================="
+echo " [*] Build Configuration"
+echo "==========================================="
+echo " [+] Device:              ${DEVICE_NAME}"
+echo " [+] Target OS:           ${TARGET_OS}"
+echo " [+] KernelSU:            $([ "$ENABLE_KSU" -eq 1 ] && echo "Enabled (${RESUKISU_REF})" || echo "Disabled")"
+echo " [+] NoMount:             $([ "$ENABLE_NOMOUNT" -eq 1 ] && echo "Enabled" || echo "Disabled")"
+echo "==========================================="
 
 # ==========================================
 # Configuration & Environment
@@ -103,6 +130,7 @@ if [ "$ENABLE_KSU" -eq 1 ]; then
     if [ -d "KernelSU" ]; then
         RESUKISU_COMMIT=$(git -C KernelSU rev-parse HEAD 2>/dev/null || echo "unknown")
         RESUKISU_COMMIT_SHORT=$(git -C KernelSU rev-parse --short=7 HEAD 2>/dev/null || echo "unknown")
+        RESUKISU_COMMIT_DATE=$(git -C KernelSU log -1 --format="%ci" HEAD 2>/dev/null || echo "unknown")
         RESUKISU_TAG=$(git -C KernelSU describe --tags --always --abbrev=0 2>/dev/null || echo "unknown")
         RESUKISU_COUNT=$(git -C KernelSU rev-list --count HEAD 2>/dev/null || echo 0)
         RESUKISU_VER_CODE=$((30000 + RESUKISU_COUNT + 700))
@@ -111,8 +139,8 @@ if [ "$ENABLE_KSU" -eq 1 ]; then
         echo " [*] ReSukiSU Information"
         echo "==========================================="
         echo " [+] Commit:              ${RESUKISU_COMMIT_SHORT} (${RESUKISU_COMMIT})"
+        echo " [+] Commit Date:         ${RESUKISU_COMMIT_DATE}"
         echo " [+] Manager Version:     ${RESUKISU_TAG} (${RESUKISU_VER_CODE})"
-        echo " [+] Matching Manager APK: ReSukiSU_${RESUKISU_TAG}_${RESUKISU_VER_CODE} (${RESUKISU_COMMIT_SHORT})"
         echo " [+] ReSukiSU Actions:    https://github.com/ReSukiSU/ReSukiSU/actions"
         echo "==========================================="
 
@@ -123,8 +151,8 @@ if [ "$ENABLE_KSU" -eq 1 ]; then
 | Item | Value |
 | :--- | :--- |
 | **ReSukiSU Commit** | [\`${RESUKISU_COMMIT_SHORT}\`](https://github.com/ReSukiSU/ReSukiSU/commit/${RESUKISU_COMMIT}) |
+| **Commit Date** | \`${RESUKISU_COMMIT_DATE}\` |
 | **Manager Version** | \`${RESUKISU_TAG}\` (\`${RESUKISU_VER_CODE}\`) |
-| **Target APK** | \`ReSukiSU_${RESUKISU_TAG}_${RESUKISU_VER_CODE}\` |
 | **CI Actions** | [ReSukiSU CI Builds](https://github.com/ReSukiSU/ReSukiSU/actions) |
 
 EOF
@@ -149,13 +177,15 @@ echo "==========================================="
 # ==========================================
 # NoMount Setup
 # ==========================================
-echo "==========================================="
-echo " [*] Initializing NoMount Setup"
-echo "==========================================="
-echo "[*] Downloading and running NoMount remote setup script..."
-curl -LSs "https://raw.githubusercontent.com/maxsteeel/nomount/refs/heads/dev/kernel/setup.sh" | bash -s dev
-echo "[+] NoMount setup finished."
-echo "==========================================="
+if [ "$ENABLE_NOMOUNT" -eq 1 ]; then
+    echo "==========================================="
+    echo " [*] Initializing NoMount Setup"
+    echo "==========================================="
+    echo "[*] Downloading and running NoMount remote setup script..."
+    curl -LSs "https://raw.githubusercontent.com/maxsteeel/nomount/refs/heads/dev/kernel/setup.sh" | bash -s dev
+    echo "[+] NoMount setup finished."
+    echo "==========================================="
+fi
 
 # ==========================================
 # AnyKernel3 Setup
@@ -278,11 +308,13 @@ build_target() {
             -e KSU_SUSFS
     fi
 
-    # 3. NoMount configurations (Always applied)
-    echo "[*] Injecting NoMount & KEYS configurations..."
-    scripts/config --file "${OUT_DIR}/.config" \
-        -e KEYS \
-        -e NOMOUNT
+    # 3. NoMount configurations (Conditional)
+    if [ "$ENABLE_NOMOUNT" -eq 1 ]; then
+        echo "[*] Injecting NoMount & KEYS configurations..."
+        scripts/config --file "${OUT_DIR}/.config" \
+            -e KEYS \
+            -e NOMOUNT
+    fi
 
     # 4. MIUI configurations
     if [ "$OS_TYPE" == "miui" ]; then
@@ -369,9 +401,13 @@ build_target() {
         if [ "$ENABLE_KSU" -eq 1 ]; then
             KSU_ZIP_STR="ReSukiSU-SuSFS"
         fi
+        local NOMOUNT_ZIP_STR=""
+        if [ "$ENABLE_NOMOUNT" -eq 1 ]; then
+            NOMOUNT_ZIP_STR="-NoMount"
+        fi
         local GIT_COMMIT_ID=$(git rev-parse --short=8 HEAD 2>/dev/null || echo "unknown")
         local OS_UPPER=$(echo "$OS_TYPE" | tr '[:lower:]' '[:upper:]')
-        local ZIP_FILENAME="APTKernel_${OS_UPPER}_${DEVICE_NAME}_${KSU_ZIP_STR}_$(date +'%Y%m%d_%H%M%S')_anykernel3_${GIT_COMMIT_ID}.zip"
+        local ZIP_FILENAME="APTKernel_${OS_UPPER}_${DEVICE_NAME}_${KSU_ZIP_STR}${NOMOUNT_ZIP_STR}_$(date +'%Y%m%d_%H%M%S')_anykernel3_${GIT_COMMIT_ID}.zip"
         
         echo "[*] Zipping $ZIP_FILENAME ..."
         pushd anykernel > /dev/null

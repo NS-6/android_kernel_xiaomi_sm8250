@@ -6,7 +6,7 @@ on:
       device:
         description: 'Target Device Code (设备代号)'
         required: true
-        default: 'lmi'
+        default: 'alioth'
         type: choice
         options:
           - alioth
@@ -27,6 +27,11 @@ on:
         required: true
         type: boolean
         default: false
+      nomount:
+        description: 'Enable NoMount'
+        required: true
+        type: boolean
+        default: false
       ksu_ref:
         description: 'ReSukiSU Commit/Tag (default: 3380d41)'
         required: false
@@ -36,7 +41,7 @@ on:
         description: 'Target OS (目标系统)'
         required: true
         type: choice
-        default: 'both'
+        default: 'aosp'
         options:
           - aosp
           - miui
@@ -44,7 +49,7 @@ on:
 
 jobs:
   build-kernel:
-    name: Build ${{ github.event.inputs.device }} | KSU:${{ github.event.inputs.ksu }} | OS:${{ github.event.inputs.target_os }}
+    name: Build ${{ github.event.inputs.device }} | KSU:${{ github.event.inputs.ksu }} | NM:${{ github.event.inputs.nomount }} | OS:${{ github.event.inputs.target_os }}
     runs-on: ubuntu-latest
     
     steps:
@@ -91,10 +96,12 @@ jobs:
             ARGS="$ARGS ksu"
           fi
         fi
-        
-        if [ "${{ github.event.inputs.target_os }}" != "both" ]; then
-          ARGS="$ARGS ${{ github.event.inputs.target_os }}"
+
+        if [ "${{ github.event.inputs.nomount }}" == "true" ]; then
+          ARGS="$ARGS nomount"
         fi
+        
+        ARGS="$ARGS ${{ github.event.inputs.target_os }}"
         
         echo "Executing command: ./build_kernel.sh $ARGS"
         ./build_kernel.sh $ARGS
